@@ -1,0 +1,209 @@
+=====================================================================================
+find event , user detail with response
+----------------------------------------------------------
+
+CREATE OR ALTER PROCEDURE FINDRESPONSE (@MODE VARCHAR(10)) AS
+SELECT RSVP.RSVPID , RSVP.RESPONSE , RSVP.USERRESPONSETIME ,[DBO].[USER].FIRSTNAME , [DBO].[USER].MOBILE , EVENTS.TITLE , EVENTS.DESCRIPTION
+FROM RSVP 
+JOIN [DBO].[USER]
+ON [DBO].[USER].USERID = RSVP.USERID
+JOIN EVENTS 
+ON EVENTS.EVENTID = RSVP.EVENTID WHERE MODE = @MODE
+
+EXEC FINDRESPONSE 'ONLINE';	
+
+==========================================================================================
+count the total response submitted by user(with yes answer) on particluar event
+-----------------------------------------------------------------------------------
+
+CREATE OR ALTER PROCEDURE COUNTRESPONSE (@TITLE VARCHAR(50))
+AS
+BEGIN
+SELECT  e.title,COUNT(*) AS count FROM RSVP r 
+INNER JOIN EVENTS e ON e.eventID=r.eventID
+INNER JOIN [DBO].[USER] u ON r.userID=u.userID
+WHERE r.RESPONSE='YES' AND e.TITLE=@TITLE
+GROUP BY e.title
+END
+
+EXEC COUNTRESPONSE 'CODE-REVIEW'
+
+
+
+==========================================================================================
+CRUD operation with user
+------------------------------------------------------------------------------------
+
+CREATE OR ALTER PROCEDURE USERINSERT
+    @USERID INT = NULL,
+    @FIRSTNAME VARCHAR(100) = NULL,
+    @LASTNAME VARCHAR(100) = NULL,
+    @EMAIL VARCHAR(100) = NULL,
+    @PASSWORD VARCHAR(100) = NULL,
+    @MOBILE VARCHAR(13) = NULL,
+    @CREATEDAT DATE = NULL,
+    @ISDELETED BIT = NULL,
+    @OPERATIONTYPE VARCHAR(10)
+AS
+BEGIN
+    SET NOCOUNT ON;
+    
+    IF @OPERATIONTYPE = 'INSERT'
+        INSERT INTO [USER] (FIRSTNAME, LASTNAME, EMAIL, PASSWORD, MOBILE, CREATEDAT, ISDELETED)
+        VALUES (@FIRSTNAME, @LASTNAME, @EMAIL, @PASSWORD, @MOBILE, @CREATEDAT, @ISDELETED)
+    ELSE IF @OPERATIONTYPE = 'UPDATE'
+        UPDATE [USER]
+        SET FIRSTNAME = ISNULL(@FIRSTNAME, FIRSTNAME), LASTNAME = ISNULL(@LASTNAME, LASTNAME), 
+        EMAIL = ISNULL(@EMAIL, EMAIL), PASSWORD = ISNULL(@PASSWORD, PASSWORD), 
+        MOBILE = ISNULL(@MOBILE, MOBILE), CREATEDAT = ISNULL(@CREATEDAT, CREATEDAT), 
+        ISDELETED = ISNULL(@ISDELETED, ISDELETED)
+        WHERE USERID = @USERID
+    ELSE IF @OPERATIONTYPE = 'DELETE'
+        DELETE FROM [DBO].[USER] WHERE USERID = @USERID
+END
+
+EXEC USERINSERT 19,'Rudolph','Est','rudolph@gmail.com','rudolph123',6334334343,'2023-4-11',0,'INSERT'
+
+
+====================================================================================================
+find event detail , venue with date,month,year search 
+-------------------------------------------------------------------------------------------------
+
+CREATE OR ALTER PROCEDURE SEARCHWITHMONTH (@MONTH BIGINT)
+AS
+BEGIN
+ SELECT U.FIRSTNAME , U.LASTNAME , EC.NAME , EC.CREATEDAT, E.TITLE ,E.MODE,E.DESCRIPTION,E.STARTDATETIME,E.ENDDATETIME  FROM EVENTS E
+ INNER JOIN [DBO].[USER] U ON E.USERID = U.USERID
+ INNER JOIN EVENTCATEGORY EC ON EC.EVENTCATID = E.EVENTCATID 
+ WHERE MONTH(E.CREATEDAT) = @MONTH
+END
+
+EXEC SEARCHWITHMONTH 1
+
+
+========================================================================================================
+show event details with given date,MONTH,YEAR
+-------------------------------------------------------------------------------------------------
+
+CREATE OR ALTER PROCEDURE LISTEVENTBYDATE (@DATE DATE)
+AS
+BEGIN
+ SELECT U.FIRSTNAME , U.LASTNAME , EC.NAME , EC.CREATEDAT, E.TITLE ,E.MODE,E.DESCRIPTION,E.STARTDATETIME,E.ENDDATETIME  FROM EVENTS E
+ INNER JOIN [DBO].[USER] U ON E.USERID = U.USERID
+  INNER JOIN EVENTCATEGORY EC ON EC.EVENTCATID = E.EVENTCATID
+ WHERE E.CREATEDAT = @DATE
+END
+
+EXEC LISTEVENTBYDATE '2023-01-29'
+
+
+
+==============================================================================================================================
+==============================================================================================================================
+view 
+
+CREATE OR ALTER VIEW MASTER_VIEW AS 
+SELECT U.FIRSTNAME,U.EMAIL,E.TITLE,E.DESCRIPTION,E.MODE,
+R.RESPONSE,E.CREATEDAT,GP.NAME AS GROUPNAME FROM [DBO].[USER] AS U 
+INNER JOIN EVENTS E ON E.USERID = U.USERID 
+INNER JOIN RSVP R ON R.USERID = U.USERID
+INNER JOIN USERGROUPMAPPING G ON G.USERID = U.USERID 
+INNER JOIN [DBO].[GROUP] GP ON G.GROUPID = GP.GROUPID 
+GROUP BY U.FIRSTNAME,U.EMAIL,E.TITLE,E.DESCRIPTION,E.MODE,
+R.RESPONSE,E.CREATEDAT,GP.NAME 
+
+
+SELECT * FROM MASTER_VIEW
+
+
+=============================================================================================================================
+
+showing view of users whose name starts with 's'
+
+select * from user_event_view1	
+
+CREATE or alter VIEW user_event_view1 AS
+SELECT u.firstName, u.lastName, e.title, e.description, e.startTime, e.endTime
+FROM [dbo].[user] u
+JOIN [dbo].[rsvp] r ON u.userIDPK = r.userIDFK
+JOIN [dbo].[events] e ON r.eventIDFK = e.eventIDPK where firstname like 's%';
+
+
+==========================================================================================================================
+view for showing upcoming events
+
+
+CREATE OR ALTER VIEW PAST_EVENTS AS 
+SELECT E.TITLE , EC.NAME , U.FIRSTNAME,U.EMAIL , E.DESCRIPTION , E.STARTDATETIME , E.ENDDATETIME , E.MODE ,E.CREATEDAT FROM EVENTS E 
+INNER JOIN EVENTCATEGORY EC ON EC.EVENTCATID = E.EVENTCATID 
+INNER JOIN [DBO].[USER] U ON U.USERID = E.USERID 
+WHERE E.CREATEDAT < GETDATE()
+
+SELECT * FROM PAST_EVENTS
+
+
+============================================================================================================================
+trigger  
+
+
+CREATE or alter TRIGGER update_event_status
+ON events
+INSTEAD OF INSERT
+AS
+BEGIN
+  SET NOCOUNT ON; 	
+  DECLARE @isActive BIT;
+  SELECT @isActive = 
+    CASE
+      WHEN DATEDIFF(second, CURRENT_TIMESTAMP, inserted.startTime) < 0 
+        AND DATEDIFF(second, CURRENT_TIMESTAMP, inserted.endTime) < 0
+      THEN 0
+      ELSE 1
+    END
+  FROM inserted;
+  INSERT INTO events (startTime, endTime, isActive)
+  SELECT startTime, endTime, @isActive
+  FROM inserted;
+END;
+
+
+
+==============================================================================================================================
+User defined function
+
+
+CREATE OR ALTER  FUNCTION [dbo].[EVENTRECORDS]
+(
+	@EVENTID int
+)
+RETURNS int
+AS
+BEGIN
+	DECLARE @COUNT int
+
+	SELECT @COUNT  = COUNT(*)  FROM EVENTS
+	INNER JOIN EVENTCATEGORY ON EVENTS.EVENTCATID=eventCategory.eventCatID
+	GROUP BY EVENTS.EVENTCATID
+
+	RETURN @COUNT
+END
+
+GO
+
+SELECT DBO.EVENTRECORDS(2)
+
+===================================================================================================================
+CHECKS WHEATHER A PERSON IS AVAILABLE FOR THE MEETING OR NOT.
+
+CREATE OR ALTER FUNCTION LISTAVAILABLE_PERSON(@USERNAME VARCHAR(50))
+RETURNS TABLE
+AS RETURN (
+  SELECT  RSVPID,RSVP.STATUS,RESPONSE,U.FIRSTNAME,E.TITLE FROM RSVP INNER JOIN EVENTS E ON E.EVENTID=RSVP.EVENTID
+  INNER JOIN [DBO].[USER] U ON
+  U.USERID=RSVP.USERID
+  WHERE U.FIRSTNAME=@USERNAME
+  AND STATUS='AVAILABLE'
+  GROUP BY RSVPID,RSVP.STATUS,RESPONSE,COMMENT,U.FIRSTNAME,E.TITLE)
+  GO
+	
+SELECT * FROM  LISTAVAILABLE_PERSON('RAHUL')
